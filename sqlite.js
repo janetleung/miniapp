@@ -4,57 +4,93 @@ const db = new sqlite3.Database('app.sqlite')
 
 const dbInit = () => {
   db.serialize(function() {
-    db.run("create table activities_info(id integer, participants varchar, title varchar, time varchar, location varchar, desc text, address varchar, address_detail varchar, created_by integer, created_at integer, updated_at integer)");
-    db.run("create table activities_token (id INTEGER PRIMARY KEY, token varchar, openid varchar)")
-    db.run("create table activities_user (id INTEGER PRIMARY KEY, nickname varchar, gender INTEGER, avatar text, language varchar, openid varchar, created_at INTEGER, updated_at INTEGER)")
-    // db.all("select * from activities_info", (err, res) => {
-    //   console.log(err, res)
-    // })
-    // db.run("insert into activities_info values(1,'40302063','test','2018-01-01T00:00:00.000000+08:00', '{\"coordinates\"\:[113.32455405812205\,23.10645918477737]\,\"type\"\:\"Point\"}','testtest','广州塔','阅江西路222号','40368608',1514466660,1514466661)")
-    // db.run("insert into activities_token (token, openid, varchar) values ('token', 'openid', 'test')")
-    // db.run('drop table activities_user')
+
+    let createTable = function(table, fields) {
+      fields = fields.map(f => {
+        return `${f.name} ${f.type || 'varchar'}`
+      }).join(', ')
+      db.run(`create table ${table}(id integer PRIMARY KEY AUTOINCREMENT, created_at datetime, updated_at datetime, ${fields})`)
+    }
+
+    let tables = [
+      {
+        table: 'activities_info',
+        fields: [{
+          name: 'title'
+        }, {
+          name: 'time',
+          type: 'datetime'
+        }, {
+          name: 'location'
+        }, {
+          name: 'desc'
+        }, {
+          name: 'address'
+        }, {
+          name: 'address_detail'
+        }, {
+          name: 'created_by',
+          type: 'integer'
+        }]
+      }, {
+        table: 'activities_record',
+        fields: [{
+          name: 'activity_id',
+          type: 'integer'
+        }, {
+          name: 'created_by',
+          type: 'created_by'
+        }]
+      }, {
+        table: 'user',
+        fields: [{
+          name: 'nickname'
+        }, {
+          name: 'gender',
+          type: 'integer'
+        }, {
+          name: 'avatar',
+          type: 'text'
+        }, {
+          name: 'language'
+        }, {
+          name: 'openid'
+        }]
+      }, {
+        table: 'user_token',
+        fields: [{
+          name: 'token'
+        }, {
+          name: 'session_key'
+        }, {
+          name: 'openid'
+        }, {
+          name: 'user_id',
+          type: 'integer'
+        }, {
+          name: 'expired_time',
+          type: 'datetime'
+        }]
+      }
+    ]
+
+    for(let table of tables) {
+      createTable(table.table, table.fields)
+    }
   })
   db.close()
 }
 
-// dbInit()
+const now = () => parseInt(new Date().getTime() / 1000)
 
-const queryList = (userId) => {
+const queryData = (table, key, value, select = '*') => {
+  let valueIsArray = Array.isArray(value)
+  let placehloder = valueIsArray ? value.map(v => '?') : '?'
+  let query = valueIsArray ? `in (${placehloder})` : `= ?`
   return new Promise((resolve, reject) => {
-    db.all(`select * from activities_info where participants like '%${userId}%'`, (err, res) => {
+    db.all(`select ${select} from ${table} where ${key} ${query}`, value, function(err, res) {
       if (!err) {
-        resolve(res)
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const queryActivity = (id) => {
-  return new Promise((resolve, reject) => {
-    db.all(`select * from activities_info where id = '${id}'`, (err, res) => {
-      if (!err) {
-        resolve(res)
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const updateActivity = (id, data) => {
-  if (!id) return
-  return new Promise((resolve, reject) => {
-    data = {...data, updated_at: now()}
-    let str = Object.keys(data).map(i => {
-      let value = handleData(data[i])
-      return `${i} = '${value}'`
-    })
-    str = str.join(', ')
-    db.run(`update activities_info set ${str} where id = ${id}`, (err, res) => {
-      if (!err) {
-        resolve(res)
+        resolve(res.length === 1 ? res[0] : res)
       } else {
         reject(err)
       }
@@ -62,111 +98,62 @@ const updateActivity = (id, data) => {
   })
 }
 
-const createActivity = (data) => {
+const updateData = (table, data, condition = {}) => {
+  data = {
+    ...data,
+    updated_at: now()
+  }
+  let values = []
+  let updateData = Object.entries(data).map(d => {
+    values.push(d[1])
+    return `${d[0]} = ?`
+  }).join(', ')
+  let conditionStr = `${Object.keys(condition)[0]} = ?`
+  values.push(condition[Object.keys(condition)[0]])
+
   return new Promise((resolve, reject) => {
-    data = {...data, created_at: now(), updated_at: now()}
-    let keys = Object.keys(data).join(', ')
-    let values = Object.values(data).map(val => `'${handleData(val)}'`).join(', ')
-    db.all(`insert into activities_info (${keys}) values (${values})`, (err, res) => {
+    db.run(`update ${table} set ${updateData} where ${conditionStr}`, values, function(err) {
       if (!err) {
-        resolve(res)
+        queryData(table, Object.keys(condition)[0], condition[Object.keys(condition)[0]]).then(res => {
+          resolve(res)
+        }).catch(err)
       } else {
-        reject('error')
+        reject(err)
       }
     })
   })
 }
 
-const createUser = (data) => {
+const createData = (table, data) => {
+  data = {
+    ...data,
+    created_at: now(),
+    updated_at: now()
+  }
+  let keys = Object.keys(data)
+  let placehloder = keys.map(k => '?')
+  let values = Object.values(data)
   return new Promise((resolve, reject) => {
-    data = {...data, created_at: now(), updated_at: now()}
-    let keys = Object.keys(data).join(', ')
-    let values = Object.values(data).map(val => `'${handleData(val)}'`).join(', ')
-    db.all(`insert into activities_user (${keys}) values (${values})`, (err, res) => {
+    db.run(`insert into ${table}(${keys}) values(${placehloder})`, [...values] ,function(err) {
       if (!err) {
-        db.run(`select * from activities_user where openid = '${data.openid}'`, (err, res) => {
-          if (!err) {
-            resolve(res)
-          }
+        queryData(table, 'id', this.lastID).then(res => {
+          resolve(res)
+        }).catch(err => {
+          reject(err)
         })
       } else {
-        reject('error')
+        reject(err)
       }
     })
   })
 }
-
-const getUser = (id) => {
-  return new Promise((resolve, reject) => {
-    db.all(`select * from activities_user where openid = '${id}'`, (err, res) => {
-      if (!err) {
-        resolve(res)
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const createToken = (token, openid) => {
-  return new Promise((resolve, reject) => {
-    db.all(`insert into activities_token (token, openid) values ('${token}', '${openid}')`, (err, res) => {
-      if (!err) {
-        resolve('success')
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const getToken = (id) => {
-  return new Promise((resolve, reject) => {
-    db.all(`select * from activities_token where openid = '${id}'`, (err, res) => {
-      if (!err) {
-        resolve(res)
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const getInfo = (table, data) => {
-  return new Promise((resolve, reject) => {
-    db.all(`select * from activities_${table} where ${data[0]} = '${data[1]}'`, (err, res) => {
-      if (!err) {
-        resolve(res)
-      } else {
-        reject('error')
-      }
-    })
-  })
-}
-
-const handleData = (data) => {
-  if (Array.isArray(data)) {
-    return data.toString().replace('[', '').replace(']', '')
-  } else if (typeof data === 'object') {
-    return JSON.stringify(data)
-  } else {
-    return data.toString()
-  }
-}
-
-const now = () => parseInt(new Date().getTime() / 1000)
 
 let methods = {
   dbInit,
-  queryList,
-  queryActivity,
-  updateActivity,
-  createActivity,
-  getUser,
-  createUser,
-  createToken,
-  getToken,
-  getInfo
+  queryData,
+  createData,
+  updateData,
+  db
 }
 
 export default methods
